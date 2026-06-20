@@ -8,6 +8,6 @@ class = "SpaceManApp"
 [metadata]
 author = "Nic"
 license = "MIT"
-url = "https://github.com/your-username/space-man"
+url = "https://github.com/N1c0/tildagon-Spaceman/"
 description = "For the 26 theme: Scroll the planets, the Sun, the Moon and a rocket. Auto-advances, shake to restart. Manually control with E & B buttons"
 version = "1"
