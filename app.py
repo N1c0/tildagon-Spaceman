@@ -33,8 +33,44 @@ STAR_BRIGHT = 1.0
 
 LED_BRIGHTNESS = 0.28       
 
-Scene = namedtuple("Scene", ("name", "draw", "captioned", "tint"))
+# Planet scenes (used for the random-on-shake jump)
+PLANETS = {
+    "Mercury", "Venus", "Earth", "Mars", "Jupiter",
+    "Saturn", "Uranus", "Neptune", "Pluto",
+}
 
+# Splash text shown on launch (dismissed with the C button)
+INTRO_TEXT = (
+    "Can be used as a companion app to Nibula the pen plotter. "
+    "Cycle through the space objects with B/E buttons. "
+    "Choose an object with C and scan your QR code with Nibula's scanner."
+    "\n"
+    "Press C to continue."
+)
+
+# ---- QR Codes for each object ----
+# Pre-computed QR codes so the badge never runs an encoder.
+# EMF-A-####  (Mercury = EMF-A-0001 ... Rocket = EMF-A-0012).
+# Each row is a 21-bit int: bit 20 = left column, bit 0 = right column
+QR_SIZE = 21                # modules per side
+QR_MOD = 7                  # on-screen pixels per module (147px code)
+
+QR_ROWS = [
+    (2083967, 1071681, 1527389, 1525341, 1529181, 1068353, 2086271, 1792, 1395221, 988258, 121118, 374862, 93532, 3759, 2083541, 1065888, 1531611, 1524846, 1526033, 1072231, 2082133),  # EMF-A-0001  Mercury
+    (2085759, 1065537, 1531229, 1525085, 1526621, 1072961, 2086271, 1280, 1338437, 69320, 1730484, 1876692, 1268726, 1029, 2081919, 1071370, 1524849, 1526468, 1530811, 1068749, 2088959),  # EMF-A-0002  Venus
+    (2086527, 1069889, 1530461, 1524317, 1530717, 1067073, 2086271, 3072, 1309305, 1226653, 1398566, 1126888, 163830, 6594, 2081334, 1067103, 1531107, 1526232, 1530811, 1070858, 2085302),  # EMF-A-0003  Earth
+    (2085247, 1071937, 1529181, 1527389, 1531741, 1066049, 2086271, 1024, 1307257, 1450909, 1823526, 1392088, 1998806, 7618, 2082358, 1068127, 1528035, 1527256, 1529787, 1070858, 2086326),  # EMF-A-0004  Mars
+    (2086015, 1071937, 1527901, 1526877, 1530717, 1066049, 2086271, 3072, 1308281, 1085341, 1951526, 600568, 1006550, 4546, 2081334, 1067103, 1531107, 1526232, 1529787, 1072906, 2087350),  # EMF-A-0005  Jupiter
+    (2085247, 1071425, 1530205, 1525085, 1531741, 1068097, 2086271, 1024, 1309305, 1327005, 840486, 1743304, 1558486, 4546, 2082358, 1067103, 1531107, 1527256, 1531835, 1070858, 2087350),  # EMF-A-0006  Saturn
+    (2087551, 1067329, 1527645, 1530973, 1528157, 1071681, 2086271, 4864, 1143377, 1816335, 2085491, 1344716, 355822, 7618, 2085304, 1070898, 1530441, 1531651, 1527420, 1065205, 2087367),  # EMF-A-0007  Uranus
+    (2082431, 1066817, 1530973, 1529693, 1529181, 1072705, 2086271, 5120, 1557053, 11244, 745839, 958432, 1145149, 289, 2085540, 1069102, 1528490, 1530848, 1529184, 1068009, 2082084),  # EMF-A-0008  Neptune
+    (2084735, 1070145, 1525085, 1525341, 1531229, 1068353, 2086271, 3840, 1395221, 1975394, 682270, 665678, 475468, 3759, 2083541, 1066912, 1528539, 1526894, 1526033, 1069159, 2082133),  # EMF-A-0009  Pluto
+    (2083967, 1070401, 1526365, 1524829, 1529181, 1066305, 2086271, 768, 1395221, 2034786, 389406, 1642574, 614764, 1727, 2083541, 1065888, 1529563, 1525870, 1525009, 1069159, 2082133),  # EMF-A-0010  Sun
+    (2085759, 1068353, 1530205, 1525597, 1526621, 1070913, 2086271, 256, 1338437, 1119944, 1986484, 2772, 1791942, 3093, 2081919, 1071370, 1526897, 1525444, 1529787, 1065677, 2088959),  # EMF-A-0011  Moon
+    (2087039, 1068097, 1527133, 1530717, 1528157, 1070657, 2086271, 5888, 1144401, 756495, 289395, 2068684, 654846, 4562, 2085304, 1069874, 1531465, 1528579, 1525372, 1066229, 2088391),  # EMF-A-0012  Rocket
+]
+
+Scene = namedtuple("Scene", ("name", "draw", "captioned", "tint"))
 
 class SpaceManApp(app.App):
     def __init__(self):
@@ -59,6 +95,12 @@ class SpaceManApp(app.App):
         self.cooldown = 0        
         self.ticks = 0           
         self.leds_owned = False  
+        self.show_qr = False     # True while the scannable QR is on screen
+        self.show_intro = True   # splash/instructions shown on launch
+        self._intro_lines = None # cached wrapped splash text (built on first draw)
+        self.planet_indices = [
+            i for i, s in enumerate(self.scenes) if s.name in PLANETS
+        ]
         # Each scene with a sky gets a random scatter
         self.moon_stars = self._make_stars()
         self.rocket_stars = self._make_stars()
@@ -80,10 +122,16 @@ class SpaceManApp(app.App):
     # ---------- LEDs ----------
 
     def _set_leds(self, tint):
-        # Tint all 12 LEDs to colors and dim to defined brightness
+        # Tint all 12 LEDs to colours and dim to defined brightness
         colour = tuple(int(c * LED_BRIGHTNESS) for c in tint)
         for led in range(1, 13):
             tildagonos.leds[led] = colour
+        tildagonos.leds.write()
+
+    def _set_leds_white(self):
+        # Full-brightness white ring (LEDs 1-12) to illuminate the QR for scanning
+        for led in range(1, 13):
+            tildagonos.leds[led] = (255, 255, 255)
         tildagonos.leds.write()
 
     def _release_leds(self):
@@ -100,6 +148,13 @@ class SpaceManApp(app.App):
 
     def _advance(self, step):
         self._show(self.index + step)
+
+    def _random_planet(self):
+        # Jump to a random planet (avoid repeating the current one if possible)
+        choices = [i for i in self.planet_indices if i != self.index]
+        if not choices:
+            choices = self.planet_indices
+        self._show(random.choice(choices))
 
     def _shaken(self):
         
@@ -139,15 +194,30 @@ class SpaceManApp(app.App):
             self.minimise()              
             return
 
+        if self.show_intro:
+            if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+                self.button_states.clear()
+                self.show_intro = False  # C dismisses the splash into the scenes
+            self._set_leds(self.scenes[self.index].tint)
+            return
+
         if self.button_states.get(BUTTON_TYPES["RIGHT"]):
             self.button_states.clear()
             self._advance(1)
         if self.button_states.get(BUTTON_TYPES["LEFT"]):
             self.button_states.clear()
             self._advance(-1)
+        if self.button_states.get(BUTTON_TYPES["CONFIRM"]):
+            self.button_states.clear()
+            self.show_qr = not self.show_qr   # toggle the scannable QR overlay
+            self.frames = 0                   # reset dwell so exit does not jump
+
+        if self.show_qr:
+            self._set_leds_white()       # Set LEDs to white when QR code is diaplayed
+            return                       
 
         if self._shaken():
-            self._show(0)                # shake jumps back to start
+            self._random_planet()        # shake jumps to a random planet
 
         self.frames += 1
         if self.frames >= FRAMES_PER_SCENE:
@@ -278,6 +348,13 @@ class SpaceManApp(app.App):
         ctx.restore()
 
     def draw(self, ctx):
+        if self.show_intro:
+            self._draw_intro(ctx)
+            return
+        if self.show_qr:
+            self._draw_qr(ctx)
+            return
+
         clear_background(ctx)
         scene = self.scenes[self.index]
 
@@ -287,6 +364,80 @@ class SpaceManApp(app.App):
 
         if scene.captioned:
             self._draw_caption(ctx, scene.name)
+
+
+    def _draw_qr(self, ctx):
+        rows = QR_ROWS[self.index]
+        span = QR_SIZE * QR_MOD
+        origin = -span / 2
+        ctx.rgb(1, 1, 1).rectangle(-120, -120, 240, 240).fill()
+        ctx.rgb(0, 0, 0)
+        for r in range(QR_SIZE):
+            bits = rows[r]
+            y = origin + r * QR_MOD
+            c = 0
+            while c < QR_SIZE:
+                if (bits >> (QR_SIZE - 1 - c)) & 1:
+                    run = 1
+                    while c + run < QR_SIZE and (bits >> (QR_SIZE - 1 - (c + run))) & 1:
+                        run += 1
+                    ctx.rectangle(origin + c * QR_MOD, y, run * QR_MOD, QR_MOD).fill()
+                    c += run
+                else:
+                    c += 1
+
+    @staticmethod
+    def _wrap(ctx, text, max_width):
+        lines = []
+        line = ""
+        for word in text.split():
+            trial = word if not line else line + " " + word
+            if ctx.text_width(trial) <= max_width:
+                line = trial
+            else:
+                if line:
+                    lines.append(line)
+                line = word
+        if line:
+            lines.append(line)
+        return lines
+
+    def _build_intro_lines(self, ctx):
+        ctx.font = ctx.get_font_name(0)
+        max_width = 150
+        paragraphs = INTRO_TEXT.split("\n")
+        wrapped = []
+        for font_size in (16, 15, 14, 13, 12, 11, 10):
+            ctx.font_size = font_size
+            line_height = font_size + 3
+            wrapped = []
+            for i, para in enumerate(paragraphs):
+                if i:
+                    wrapped.append("")       
+                wrapped.extend(self._wrap(ctx, para, max_width))
+            if len(wrapped) * line_height <= 176:   
+                self._intro_lines = (wrapped, font_size)
+                return
+        self._intro_lines = (wrapped, 10)           
+
+    def _draw_intro(self, ctx):
+        clear_background(ctx)
+        ctx.save()
+        if self._intro_lines is None:
+            self._build_intro_lines(ctx)
+        lines, font_size = self._intro_lines
+        line_height = font_size + 3
+
+        ctx.font = ctx.get_font_name(0)
+        ctx.font_size = font_size
+        ctx.rgb(1, 1, 1)
+        y = -(len(lines) - 1) * line_height / 2
+        for ln in lines:
+            if ln:
+                ctx.move_to(-ctx.text_width(ln) / 2, y)
+                ctx.text(ln)
+            y += line_height
+        ctx.restore()
 
 
 __app_export__ = SpaceManApp
