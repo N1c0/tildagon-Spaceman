@@ -47,7 +47,7 @@ INTRO_TEXT = (
     "\n"
     "Press C to continue."
 )
-
+# Adding to try republishing to app store
 # ---- QR Codes for each object ----
 # Pre-computed QR codes so the badge never runs an encoder.
 # EMF-A-####  (Mercury = EMF-A-0001 ... Rocket = EMF-A-0012).
